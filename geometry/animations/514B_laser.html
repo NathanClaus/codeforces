@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Laser Shot Animation</title>
+    <style>
+        body { 
+            margin: 0; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            overflow: hidden;
+        }
+        canvas { 
+            width: 100vw; 
+            height: 100vh; 
+            display: block; 
+        }
+        #controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            width: 300px;
+            z-index: 100;
+        }
+        button {
+            margin: 5px;
+            padding: 8px 15px;
+            background: #4CAF50;
+            border: none;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.3s;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        input[type="text"] {
+            width: 80%;
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        .slider-container {
+            margin: 10px 0;
+        }
+        #status {
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            text-align: center;
+            background-color: rgba(33, 150, 243, 0.3);
+            color: #0277bd;
+        }
+        h2 {
+            margin-top: 0;
+            font-size: 18px;
+        }
+        .info {
+            font-size: 13px;
+            margin-bottom: 10px;
+            line-height: 1.4;
+        }
+        #examples {
+            margin-top: 10px;
+        }
+        .example-btn {
+            background: #2196F3;
+            font-size: 12px;
+            padding: 5px 8px;
+            margin: 2px;
+        }
+        .example-btn:hover {
+            background: #0b7dda;
+        }
+        #enemyInput {
+            width: 100%;
+            height: 80px;
+            margin: 5px 0;
+            padding: 5px;
+            font-family: monospace;
+            resize: vertical;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h2>Laser Shot Visualization</h2>
+        <p class="info">
+            This visualizes CodeForces problem 514B. A laser at position (x,y) shoots in a straight line.
+            What is the minimum number of shots needed to hit all enemies?
+        </p>
+        
+        <div>
+            <label for="laserX">Laser X:</label>
+            <input type="number" id="laserX" value="0" style="width: 50px">
+            <label for="laserY">Laser Y:</label>
+            <input type="number" id="laserY" value="0" style="width: 50px">
+        </div>
+        
+        <div style="margin-top: 10px;">
+            <label for="enemyInput">Enemy positions (x,y pairs):</label>
+            <textarea id="enemyInput" placeholder="1 1&#10;2 2&#10;3 3&#10;1 3&#10;...">1 1
+2 2
+3 3
+1 3
+5 5</textarea>
+        </div>
+        
+        <div class="slider-container">
+            <label for="speed">Animation Speed:</label>
+            <input type="range" id="speed" min="1" max="10" value="5">
+        </div>
+        
+        <div>
+            <button onclick="startAnimation()">Start Animation</button>
+            <button onclick="resetAnimation()">Reset</button>
+        </div>
+        
+        <div id="status">Minimum Shots: 0</div>
+        
+        <div id="examples">
+            <p>Examples:</p>
+            <button class="example-btn" onclick="loadExample('example1')">Example 1</button>
+            <button class="example-btn" onclick="loadExample('example2')">Example 2</button>
+            <button class="example-btn" onclick="loadExample('random')">Random</button>
+        </div>
+    </div>
+    <canvas id="glCanvas"></canvas>
+
+    <script id="vertexShader" type="x-shader/x-vertex">
+        attribute vec3 position;
+        attribute vec3 color;
+        uniform mat4 uMatrix;
+        varying vec3 vColor;
+        void main() {
+            gl_Position = uMatrix * vec4(position, 1.0);
+            vColor = color;
+        }
+    </script>
+
+    <script id="fragmentShader" type="x-shader/x-fragment">
+        precision mediump float;
+        varying vec3 vColor;
+        void main() {
+            gl_FragColor = vec4(vColor, 1.0);
+        }
+    </script>
+
+    <script>
+        let gl;
+        let program;
+        let laserPos = { x: 0, y: 0 };
+        let enemies = [];
+        let shots = [];
+        let animationFrame = 0;
+        let isAnimating = false;
+        let transformMatrix = new Float32Array(16);
+        let zoomLevel = 0.08;
+        let gridSize = 10;
+        let currentTime = 0;
+
+        // Create perspective matrix
+        function createMatrix() {
+            const canvas = document.getElementById('glCanvas');
+            const aspectRatio = canvas.width / canvas.height;
+            
+            // Reset to identity matrix
+            for (let i = 0; i < 16; i++) {
+                transformMatrix[i] = 0;
+            }
+            transformMatrix[0] = zoomLevel / aspectRatio;
+            transformMatrix[5] = zoomLevel;
+            transformMatrix[10] = zoomLevel;
+            transformMatrix[15] = 1;
+        }
+
+        function initGL() {
+            const canvas = document.getElementById('glCanvas');
+            gl = canvas.getContext('webgl', { antialias: true });
+            
+            if (!gl) {
+                alert('WebGL not supported by your browser!');
+                return;
+            }
+
+            // Set canvas size
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                gl.viewport(0, 0, canvas.width, canvas.height);
+                createMatrix();
+            }
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // Create shader program
+            const vertexShaderSource = document.getElementById('vertexShader').text;
+            const fragmentShaderSource = document.getElementById('fragmentShader').text;
+            
+            const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+            const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+            
+            if (!vertexShader || !fragmentShader) {
+                alert('Shader compilation failed!');
+                return;
+            }
+            
+            program = createProgram(gl, vertexShader, fragmentShader);
+            
+            if (!program) {
+                alert('Shader program creation failed!');
+                return;
+            }
+
+            // Get attribute and uniform locations
+            program.positionAttributeLocation = gl.getAttribLocation(program, 'position');
+            program.colorAttributeLocation = gl.getAttribLocation(program, 'color');
+            program.matrixLocation = gl.getUniformLocation(program, 'uMatrix');
+            
+            // Enable blending for smoother lines
+            gl.enable(gl.BLEND);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        }
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Shader compilation error:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        function createProgram(gl, vertexShader, fragmentShader) {
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error('Program linking error:', gl.getProgramInfoLog(program));
+                gl.deleteProgram(program);
+                return null;
+            }
+            return program;
+        }
+
+        function createGrid() {
+            const vertices = [];
+            const colors = [];
+            
+            // Create grid lines
+            for (let i = -gridSize; i <= gridSize; i++) {
+                // Highlight the axes with brighter colors
+                const intensity = (i === 0) ? 0.8 : 0.2;
+                
+                // Vertical lines
+                vertices.push(i, -gridSize, 0);
+                vertices.push(i, gridSize, 0);
+                colors.push(intensity, intensity, intensity);
+                colors.push(intensity, intensity, intensity);
+                
+                // Horizontal lines
+                vertices.push(-gridSize, i, 0);
+                vertices.push(gridSize, i, 0);
+                colors.push(intensity, intensity, intensity);
+                colors.push(intensity, intensity, intensity);
+            }
+
+            return {
+                vertices: new Float32Array(vertices),
+                colors: new Float32Array(colors),
+                count: vertices.length / 3
+            };
+        }
+
+        function createAxisLabels() {
+            const vertices = [];
+            const colors = [];
+            
+            // Add small ticks and numbers at each integer point
+            for (let i = -gridSize; i <= gridSize; i++) {
+                // Skip 0 as it's the origin
+                if (i === 0) continue;
+                
+                // X-axis ticks
+                vertices.push(i, -0.1, 0);
+                vertices.push(i, 0.1, 0);
+                colors.push(0.9, 0.5, 0.5);
+                colors.push(0.9, 0.5, 0.5);
+                
+                // Y-axis ticks
+                vertices.push(-0.1, i, 0);
+                vertices.push(0.1, i, 0);
+                colors.push(0.5, 0.9, 0.5);
+                colors.push(0.5, 0.9, 0.5);
+            }
+            
+            return {
+                vertices: new Float32Array(vertices),
+                colors: new Float32Array(colors),
+                count: vertices.length / 3
+            };
+        }
+
+        function createEnemies() {
+            const vertices = [];
+            const colors = [];
+            currentTime = Date.now() * 0.001; // Current time in seconds
+            
+            for (let i = 0; i < enemies.length; i++) {
+                const enemy = enemies[i];
+                
+                // Determine color based on hit status
+                let enemyColor;
+                if (enemy.hit && enemy.hitByShot < animationFrame) {
+                    // Enemy has been hit by a current laser shot
+                    const shotColor = shots[enemy.hitByShot].color;
+                    
+                    // Add pulsating glow effect
+                    const glowIntensity = 0.3 * (Math.sin(currentTime * 5) * 0.5 + 0.5);
+                    enemyColor = [
+                        Math.min(1.0, shotColor[0] + glowIntensity),
+                        Math.min(1.0, shotColor[1] + glowIntensity),
+                        Math.min(1.0, shotColor[2] + glowIntensity)
+                    ];
+                    
+                    // Make the hit enemy slightly larger for emphasis
+                    const size = 0.25 + 0.05 * Math.sin(currentTime * 5);
+                    
+                    // Define two triangles for each enemy (making a square)
+                    // First triangle
+                    vertices.push(
+                        enemy.x - size, enemy.y - size, 0,
+                        enemy.x + size, enemy.y - size, 0,
+                        enemy.x + size, enemy.y + size, 0
+                    );
+                    
+                    // Second triangle
+                    vertices.push(
+                        enemy.x - size, enemy.y - size, 0,
+                        enemy.x + size, enemy.y + size, 0,
+                        enemy.x - size, enemy.y + size, 0
+                    );
+                } else {
+                    // Normal enemy that hasn't been hit yet or is beyond current animation frame
+                    enemyColor = enemy.originalColor;
+                    const size = 0.2;
+                    
+                    // Define two triangles for each enemy (making a square)
+                    // First triangle
+                    vertices.push(
+                        enemy.x - size, enemy.y - size, 0,
+                        enemy.x + size, enemy.y - size, 0,
+                        enemy.x + size, enemy.y + size, 0
+                    );
+                    
+                    // Second triangle
+                    vertices.push(
+                        enemy.x - size, enemy.y - size, 0,
+                        enemy.x + size, enemy.y + size, 0,
+                        enemy.x - size, enemy.y + size, 0
+                    );
+                }
+                
+                // Apply the color to both triangles (6 vertices)
+                for (let j = 0; j < 6; j++) {
+                    colors.push(enemyColor[0], enemyColor[1], enemyColor[2]);
+                }
+            }
+
+            return {
+                vertices: new Float32Array(vertices),
+                colors: new Float32Array(colors),
+                count: vertices.length / 3
+            };
+        }
+
+        function createLaser() {
+            const vertices = [];
+            const colors = [];
+            
+            // Create a small square for the laser using two triangles
+            const size = 0.3;
+            // First triangle
+            vertices.push(
+                laserPos.x - size, laserPos.y - size, 0,
+                laserPos.x + size, laserPos.y - size, 0,
+                laserPos.x + size, laserPos.y + size, 0
+            );
+            
+            // Second triangle
+            vertices.push(
+                laserPos.x - size, laserPos.y - size, 0,
+                laserPos.x + size, laserPos.y + size, 0,
+                laserPos.x - size, laserPos.y + size, 0
+            );
+            
+            // Red color for the laser - 6 vertices total
+            for (let i = 0; i < 6; i++) {
+                colors.push(1, 0, 0);
+            }
+
+            return {
+                vertices: new Float32Array(vertices),
+                colors: new Float32Array(colors),
+                count: 6
+            };
+        }
+
+        function createLaserShots() {
+            const vertices = [];
+            const colors = [];
+            
+            // Only draw shots up to animationFrame
+            const shotsToShow = shots.slice(0, animationFrame);
+            
+            for (let i = 0; i < shotsToShow.length; i++) {
+                const shot = shotsToShow[i];
+                
+                // Calculate end points for the line (extend far beyond grid in both directions)
+                const lineLength = gridSize * 3;
+                
+                // Create points in both directions
+                const startX = laserPos.x - shot.dx * lineLength;
+                const startY = laserPos.y - shot.dy * lineLength;
+                const endX = laserPos.x + shot.dx * lineLength;
+                const endY = laserPos.y + shot.dy * lineLength;
+                
+                // Draw line through laser in both directions
+                vertices.push(startX, startY, 0);
+                vertices.push(endX, endY, 0);
+                
+                // Use the shot's pre-calculated color
+                colors.push(shot.color[0], shot.color[1], shot.color[2]);
+                colors.push(shot.color[0], shot.color[1], shot.color[2]);
+                
+                // Mark enemies hit by this shot
+                for (const enemy of shot.enemies) {
+                    enemy.hit = true;
+                    enemy.hitByShot = i;
+                }
+            }
+
+            return {
+                vertices: new Float32Array(vertices),
+                colors: new Float32Array(colors),
+                count: vertices.length / 3
+            };
+        }
+
+        function drawArrays(vertices, colors, mode, count) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+            gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+            gl.enableVertexAttribArray(program.positionAttributeLocation);
+            gl.vertexAttribPointer(program.positionAttributeLocation, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+            gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+            gl.enableVertexAttribArray(program.colorAttributeLocation);
+            gl.vertexAttribPointer(program.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
+
+            gl.drawArrays(mode, 0, count);
+        }
+
+        function render() {
+            gl.clearColor(0.05, 0.05, 0.1, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            gl.useProgram(program);
+            gl.uniformMatrix4fv(program.matrixLocation, false, transformMatrix);
+
+            // Draw grid
+            const grid = createGrid();
+            drawArrays(grid.vertices, grid.colors, gl.LINES, grid.count);
+            
+            // Draw axis labels
+            const labels = createAxisLabels();
+            drawArrays(labels.vertices, labels.colors, gl.LINES, labels.count);
+            
+            // Draw laser shots
+            const shotGeometry = createLaserShots();
+            if (shotGeometry.count > 0) {
+                drawArrays(shotGeometry.vertices, shotGeometry.colors, gl.LINES, shotGeometry.count);
+                
+                // Update status showing the current number of shots
+                const statusElement = document.getElementById('status');
+                statusElement.textContent = `Minimum Shots: ${animationFrame} of ${shots.length}`;
+            }
+            
+            // Draw enemies (after shots so they appear on top)
+            const enemiesGeometry = createEnemies();
+            if (enemiesGeometry.count > 0) {
+                drawArrays(enemiesGeometry.vertices, enemiesGeometry.colors, gl.TRIANGLES, enemiesGeometry.count);
+            }
+            
+            // Draw laser
+            const laser = createLaser();
+            drawArrays(laser.vertices, laser.colors, gl.TRIANGLES, laser.count);
+        }
+
+        function animate() {
+            if (!isAnimating) return;
+            
+            render();
+            
+            if (animationFrame < shots.length) {
+                const speed = document.getElementById('speed').value;
+                animationFrame++;
+                setTimeout(() => requestAnimationFrame(animate), 500 / speed);
+            } else {
+                // Continue the glow animation even after all shots are shown
+                isAnimating = true;
+                requestAnimationFrame(continueGlowAnimation);
+            }
+        }
+        
+        function continueGlowAnimation() {
+            if (!isAnimating) return;
+            
+            render();
+            requestAnimationFrame(continueGlowAnimation);
+        }
+
+        // GCD function for calculating reduced slopes
+        function gcd(a, b) {
+            return b === 0 ? a : gcd(b, a % b);
+        }
+
+        function calculateShots() {
+            // Reset shots array
+            shots = [];
+            
+            // Calculate unique slopes using the same algorithm as in the C++ solution
+            const slopes = new Map();
+            
+            for (const enemy of enemies) {
+                let dx = enemy.x - laserPos.x;
+                let dy = enemy.y - laserPos.y;
+                
+                // Handle case when they're at the same position
+                if (dx === 0 && dy === 0) continue;
+                
+                // Reduce the slope by dividing by GCD
+                const g = gcd(Math.abs(dx), Math.abs(dy));
+                dx = dx / g;
+                dy = dy / g;
+                
+                // Normalize direction as in the C++ solution
+                if (dy < 0 || (dy === 0 && dx < 0)) {
+                    dx = -dx;
+                    dy = -dy;
+                }
+                
+                // Create a unique string key for the slope
+                const key = `${dx},${dy}`;
+                
+                if (!slopes.has(key)) {
+                    slopes.set(key, { dx, dy, count: 1, enemies: [enemy] });
+                } else {
+                    slopes.get(key).count++;
+                    slopes.get(key).enemies.push(enemy);
+                }
+            }
+            
+            // Convert slopes map to array of shots
+            let shotIndex = 0;
+            for (const [key, value] of slopes.entries()) {
+                // Create a unique color for each shot
+                const hue = (shotIndex * 137.5) % 360; // Golden angle to distribute colors
+                // Convert HSV to RGB
+                let r, g, b;
+                const h = hue / 60;
+                const s = 0.8;
+                const v = 0.9;
+                const i = Math.floor(h);
+                const f = h - i;
+                const p = v * (1 - s);
+                const q = v * (1 - s * f);
+                const t = v * (1 - s * (1 - f));
+                
+                switch(i % 6) {
+                    case 0: r = v; g = t; b = p; break;
+                    case 1: r = q; g = v; b = p; break;
+                    case 2: r = p; g = v; b = t; break;
+                    case 3: r = p; g = q; b = v; break;
+                    case 4: r = t; g = p; b = v; break;
+                    case 5: r = v; g = p; b = q; break;
+                }
+                
+                shots.push({ 
+                    dx: value.dx, 
+                    dy: value.dy, 
+                    enemies: value.enemies,
+                    color: [r, g, b]
+                });
+                
+                shotIndex++;
+            }
+            
+            // Mark all enemies as not hit initially
+            for (const enemy of enemies) {
+                enemy.hit = false;
+                enemy.hitByShot = -1;
+                enemy.originalColor = [0, 0.4, 1]; // Default blue
+            }
+            
+            return shots.length;
+        }
+
+        function startAnimation() {
+            // Get laser position from inputs
+            laserPos.x = parseFloat(document.getElementById('laserX').value) || 0;
+            laserPos.y = parseFloat(document.getElementById('laserY').value) || 0;
+            
+            // Get enemy positions from textarea
+            const enemyInput = document.getElementById('enemyInput').value;
+            enemies = [];
+            
+            enemyInput.split('\n').forEach(line => {
+                const parts = line.trim().split(/\s+/);
+                if (parts.length >= 2) {
+                    const x = parseFloat(parts[0]);
+                    const y = parseFloat(parts[1]);
+                    if (!isNaN(x) && !isNaN(y)) {
+                        enemies.push({ x, y });
+                    }
+                }
+            });
+            
+            // Calculate the minimum number of shots
+            const numShots = calculateShots();
+            
+            // Update the status display
+            const statusElement = document.getElementById('status');
+            statusElement.textContent = `Calculating minimum shots...`;
+            
+            // Set up animation
+            animationFrame = 0;
+            isAnimating = true;
+            
+            // Auto-adjust zoom level based on enemy positions
+            adjustZoom();
+            
+            // Start animation
+            animate();
+        }
+
+        function adjustZoom() {
+            // Find the maximum distance from the laser to any enemy
+            let maxDist = 5; // Default minimum grid size
+            
+            for (const enemy of enemies) {
+                const dx = enemy.x - laserPos.x;
+                const dy = enemy.y - laserPos.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                maxDist = Math.max(maxDist, dist);
+            }
+            
+            // Set grid size to cover all enemies with some margin
+            gridSize = Math.ceil(maxDist * 1.2);
+            
+            // Adjust zoom level based on grid size
+            zoomLevel = 0.8 / gridSize;
+            
+            // Update matrix
+            createMatrix();
+        }
+
+        function resetAnimation() {
+            enemies = [];
+            shots = [];
+            animationFrame = 0;
+            isAnimating = false;
+            
+            // Reset status
+            const statusElement = document.getElementById('status');
+            statusElement.textContent = `Minimum Shots: 0`;
+            
+            render();
+        }
+        
+        function loadExample(example) {
+            let laserX = 0;
+            let laserY = 0;
+            let enemyPositions = "";
+            
+            switch(example) {
+                case 'example1':
+                    laserX = 0;
+                    laserY = 0;
+                    enemyPositions = "1 1\n2 2\n3 3\n1 3\n5 5";
+                    break;
+                case 'example2':
+                    laserX = 1;
+                    laserY = 1;
+                    enemyPositions = "0 0\n2 2\n2 0\n0 2\n3 3";
+                    break;
+                case 'random':
+                    laserX = Math.floor(Math.random() * 5) - 2;
+                    laserY = Math.floor(Math.random() * 5) - 2;
+                    // Generate 5-10 random enemy positions
+                    const numEnemies = 5 + Math.floor(Math.random() * 6);
+                    for (let i = 0; i < numEnemies; i++) {
+                        const x = Math.floor(Math.random() * 10) - 5;
+                        const y = Math.floor(Math.random() * 10) - 5;
+                        enemyPositions += `${x} ${y}\n`;
+                    }
+                    break;
+            }
+            
+            document.getElementById('laserX').value = laserX;
+            document.getElementById('laserY').value = laserY;
+            document.getElementById('enemyInput').value = enemyPositions;
+            
+            startAnimation();
+        }
+
+        // Initialize WebGL when the page loads
+        window.onload = function() {
+            initGL();
+            render();
+            
+            // Add wheel event listener for zooming
+            const canvas = document.getElementById('glCanvas');
+            canvas.addEventListener('wheel', (event) => {
+                event.preventDefault();
+                
+                // Adjust zoom level based on wheel direction
+                if (event.deltaY < 0) {
+                    zoomLevel *= 1.1; // Zoom in
+                } else {
+                    zoomLevel *= 0.9; // Zoom out
+                }
+                
+                // Clamp zoom level to reasonable bounds
+                zoomLevel = Math.max(0.01, Math.min(0.5, zoomLevel));
+                
+                // Update matrix and render
+                createMatrix();
+                render();
+            });
+        };
+    </script>
+</body>
+</html> 
