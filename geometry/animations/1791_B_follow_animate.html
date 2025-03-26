@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Path Following Animation</title>
+    <style>
+        body { 
+            margin: 0; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            overflow: hidden;
+        }
+        canvas { 
+            width: 100vw; 
+            height: 100vh; 
+            display: block; 
+        }
+        #controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            width: 300px;
+            z-index: 100;
+        }
+        button {
+            margin: 5px;
+            padding: 8px 15px;
+            background: #4CAF50;
+            border: none;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.3s;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        input[type="text"] {
+            width: 80%;
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        .slider-container {
+            margin: 10px 0;
+        }
+        #status {
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .success {
+            background-color: rgba(76, 175, 80, 0.3);
+            color: #2e7d32;
+        }
+        .fail {
+            background-color: rgba(244, 67, 54, 0.3);
+            color: #c62828;
+        }
+        .pending {
+            background-color: rgba(255, 152, 0, 0.3);
+            color: #ef6c00;
+        }
+        h2 {
+            margin-top: 0;
+            font-size: 18px;
+        }
+        .info {
+            font-size: 13px;
+            margin-bottom: 10px;
+            line-height: 1.4;
+        }
+        #examples {
+            margin-top: 10px;
+        }
+        .example-btn {
+            background: #2196F3;
+            font-size: 12px;
+            padding: 5px 8px;
+            margin: 2px;
+        }
+        .example-btn:hover {
+            background: #0b7dda;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h2>Path Following Visualization</h2>
+        <p class="info">
+            This visualizes CodeForces problem 1791B. Starting at (0,0), follow a path
+            defined by U(p), D(own), L(eft), R(ight) commands to see if it hits the target at (1,1).
+        </p>
+        
+        <input type="text" id="input" placeholder="Enter path (e.g., RURD)" value="RURD">
+        
+        <div class="slider-container">
+            <label for="speed">Animation Speed:</label>
+            <input type="range" id="speed" min="1" max="10" value="5">
+        </div>
+        
+        <div>
+            <button onclick="startAnimation()">Start</button>
+            <button onclick="resetAnimation()">Reset</button>
+        </div>
+        
+        <div id="status" class="pending">Ready</div>
+        
+        <div id="examples">
+            <p>Examples:</p>
+            <button class="example-btn" onclick="loadExample('RRUU')">RRUU (No)</button>
+            <button class="example-btn" onclick="loadExample('RU')">RU (Yes)</button>
+            <button class="example-btn" onclick="loadExample('RUUURRRDDL')">RUUURRRDDL (Yes)</button>
+        </div>
+    </div>
+    <canvas id="glCanvas"></canvas>
+
+    <script id="vertexShader" type="x-shader/x-vertex">
+        attribute vec3 position;
+        attribute vec3 color;
+        uniform mat4 uMatrix;
+        varying vec3 vColor;
+        void main() {
+            gl_Position = uMatrix * vec4(position, 1.0);
+            vColor = color;
+        }
+    </script>
+
+    <script id="fragmentShader" type="x-shader/x-fragment">
+        precision mediump float;
+        varying vec3 vColor;
+        void main() {
+            gl_FragColor = vec4(vColor, 1.0);
+        }
+    </script>
+
+    <script>
+        let gl;
+        let program;
+        let currentPath = [];
+        let animationFrame = 0;
+        let isAnimating = false;
+        let reachedTarget = false;
+        let transformMatrix = new Float32Array(16);
+        let zoomLevel = 0.08;
+
+        // Create perspective matrix for 3D look
+        function createMatrix() {
+            // Get aspect ratio of the canvas
+            const canvas = document.getElementById('glCanvas');
+            const aspectRatio = canvas.width / canvas.height;
+            
+            // Reset to identity matrix
+            for (let i = 0; i < 16; i++) {
+                transformMatrix[i] = 0;
+            }
+            transformMatrix[0] = zoomLevel / aspectRatio;
+            transformMatrix[5] = zoomLevel;
+            transformMatrix[10] = zoomLevel;
+            transformMatrix[15] = 1;
+        }
+
+        function initGL() {
+            const canvas = document.getElementById('glCanvas');
+            gl = canvas.getContext('webgl', { antialias: true });
+            
+            if (!gl) {
+                alert('WebGL not supported by your browser!');
+                return;
+            }
+
+            // Set canvas size
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                gl.viewport(0, 0, canvas.width, canvas.height);
+                createMatrix();
+            }
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // Create shader program
+            const vertexShaderSource = document.getElementById('vertexShader').text;
+            const fragmentShaderSource = document.getElementById('fragmentShader').text;
+            
+            const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+            const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+            
+            if (!vertexShader || !fragmentShader) {
+                alert('Shader compilation failed!');
+                return;
+            }
+            
+            program = createProgram(gl, vertexShader, fragmentShader);
+            
+            if (!program) {
+                alert('Shader program creation failed!');
+                return;
+            }
+
+            // Get attribute and uniform locations
+            program.positionAttributeLocation = gl.getAttribLocation(program, 'position');
+            program.colorAttributeLocation = gl.getAttribLocation(program, 'color');
+            program.matrixLocation = gl.getUniformLocation(program, 'uMatrix');
+            
+            // Enable blending for smoother lines
+            gl.enable(gl.BLEND);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        }
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Shader compilation error:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        function createProgram(gl, vertexShader, fragmentShader) {
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error('Program linking error:', gl.getProgramInfoLog(program));
+                gl.deleteProgram(program);
+                return null;
+            }
+            return program;
+        }
+
+        function createGrid() {
+            const gridSize = 10;
+            const vertices = [];
+            const colors = [];
+            
+            // Create grid lines
+            for (let i = -gridSize; i <= gridSize; i++) {
+                // Highlight the axes with brighter colors
+                const intensity = (i === 0) ? 0.8 : 0.2;
+                
+                // Vertical lines
+                vertices.push(i, -gridSize, 0);
+                vertices.push(i, gridSize, 0);
+                colors.push(intensity, intensity, intensity);
+                colors.push(intensity, intensity, intensity);
+                
+                // Horizontal lines
+                vertices.push(-gridSize, i, 0);
+                vertices.push(gridSize, i, 0);
+                colors.push(intensity, intensity, intensity);
+                colors.push(intensity, intensity, intensity);
+            }
+
+            return {
+                vertices: new Float32Array(vertices),
+                colors: new Float32Array(colors),
+                count: vertices.length / 3
+            };
+        }
+
+        function createAxisLabels() {
+            const vertices = [];
+            const colors = [];
+            
+            // Add small ticks and numbers at each integer point
+            for (let i = -10; i <= 10; i++) {
+                // Skip 0 as it's the origin
+                if (i === 0) continue;
+                
+                // X-axis ticks
+                vertices.push(i, -0.1, 0);
+                vertices.push(i, 0.1, 0);
+                colors.push(0.9, 0.5, 0.5);
+                colors.push(0.9, 0.5, 0.5);
+                
+                // Y-axis ticks
+                vertices.push(-0.1, i, 0);
+                vertices.push(0.1, i, 0);
+                colors.push(0.5, 0.9, 0.5);
+                colors.push(0.5, 0.9, 0.5);
+            }
+            
+            return {
+                vertices: new Float32Array(vertices),
+                colors: new Float32Array(colors),
+                count: vertices.length / 3
+            };
+        }
+
+        function createPath(path) {
+            const vertices = [];
+            const colors = [];
+            let x = 0, y = 0;
+            
+            vertices.push(x, y, 0);
+            colors.push(0, 1, 0); // Green for start
+
+            let hitTarget = false;
+            
+            for (let i = 0; i < path.length; i++) {
+                const move = path[i];
+                switch(move) {
+                    case 'R': x++; break;
+                    case 'L': x--; break;
+                    case 'U': y++; break;
+                    case 'D': y--; break;
+                }
+                
+                // Check if we hit the target
+                if (x === 1 && y === 1 && !hitTarget) {
+                    hitTarget = true;
+                    reachedTarget = true;
+                    
+                    // Update the status display outside the animation
+                    if (i === path.length - 1) {
+                        updateStatus(true);
+                    }
+                }
+                
+                vertices.push(x, y, 0);
+                
+                // Gradient color: start green, fade to red, turn gold if hit target
+                if (hitTarget && x === 1 && y === 1) {
+                    colors.push(1, 0.84, 0); // Gold for hitting target
+                } else {
+                    const t = i / Math.max(1, path.length - 1);
+                    colors.push(t, 1-t, 0);
+                }
+            }
+            
+            // If we never hit the target
+            if (!hitTarget && path.length > 0) {
+                updateStatus(false);
+            }
+
+            return {
+                vertices: new Float32Array(vertices),
+                colors: new Float32Array(colors),
+                count: vertices.length / 3
+            };
+        }
+
+        function createTarget() {
+            const vertices = [];
+            const colors = [];
+            
+            // Create a small square for the target
+            const size = 0.3;
+            vertices.push(
+                1 - size, 1 - size, 0,
+                1 + size, 1 - size, 0,
+                1 + size, 1 + size, 0,
+                1 - size, 1 + size, 0
+            );
+            
+            // Blue with some alpha for target
+            for (let i = 0; i < 4; i++) {
+                colors.push(0, 0.4, 1);
+            }
+
+            return {
+                vertices: new Float32Array(vertices),
+                colors: new Float32Array(colors),
+                count: 4
+            };
+        }
+
+        function createOrigin() {
+            const vertices = [];
+            const colors = [];
+            
+            // Create a small square for the origin
+            const size = 0.2;
+            vertices.push(
+                -size, -size, 0,
+                size, -size, 0,
+                size, size, 0,
+                -size, size, 0
+            );
+            
+            // Green with some alpha for origin
+            for (let i = 0; i < 4; i++) {
+                colors.push(0, 0.8, 0.2);
+            }
+
+            return {
+                vertices: new Float32Array(vertices),
+                colors: new Float32Array(colors),
+                count: 4
+            };
+        }
+
+        function drawArrays(vertices, colors, mode, count) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+            gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+            gl.enableVertexAttribArray(program.positionAttributeLocation);
+            gl.vertexAttribPointer(program.positionAttributeLocation, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+            gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+            gl.enableVertexAttribArray(program.colorAttributeLocation);
+            gl.vertexAttribPointer(program.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
+
+            gl.drawArrays(mode, 0, count);
+        }
+
+        function render() {
+            gl.clearColor(0.05, 0.05, 0.1, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            gl.useProgram(program);
+            gl.uniformMatrix4fv(program.matrixLocation, false, transformMatrix);
+
+            // Draw grid
+            const grid = createGrid();
+            drawArrays(grid.vertices, grid.colors, gl.LINES, grid.count);
+            
+            // Draw axis labels
+            const labels = createAxisLabels();
+            drawArrays(labels.vertices, labels.colors, gl.LINES, labels.count);
+            
+            // Draw target point at (1,1)
+            const target = createTarget();
+            drawArrays(target.vertices, target.colors, gl.TRIANGLE_FAN, target.count);
+            
+            // Draw starting point at (0,0)
+            const origin = createOrigin();
+            drawArrays(origin.vertices, origin.colors, gl.TRIANGLE_FAN, origin.count);
+
+            // Draw path
+            if (currentPath.length > 0 && animationFrame > 0) {
+                const path = createPath(currentPath.slice(0, animationFrame));
+                drawArrays(path.vertices, path.colors, gl.LINE_STRIP, path.count);
+                
+                // Draw current position marker
+                if (animationFrame <= currentPath.length) {
+                    let x = 0, y = 0;
+                    
+                    for (let i = 0; i < animationFrame; i++) {
+                        switch(currentPath[i]) {
+                            case 'R': x++; break;
+                            case 'L': x--; break;
+                            case 'U': y++; break;
+                            case 'D': y--; break;
+                        }
+                    }
+                    
+                    // Draw a pulsating dot at current position
+                    const pulseFactor = (Math.sin(Date.now() * 0.01) + 1) * 0.15 + 0.2;
+                    const dotVertices = new Float32Array([
+                        x - pulseFactor, y - pulseFactor, 0,
+                        x + pulseFactor, y - pulseFactor, 0,
+                        x + pulseFactor, y + pulseFactor, 0,
+                        x - pulseFactor, y + pulseFactor, 0
+                    ]);
+                    
+                    const dotColors = new Float32Array([
+                        1, 0.5, 0,
+                        1, 0.5, 0,
+                        1, 0.5, 0,
+                        1, 0.5, 0
+                    ]);
+                    
+                    drawArrays(dotVertices, dotColors, gl.TRIANGLE_FAN, 4);
+                }
+            }
+        }
+
+        function animate() {
+            if (!isAnimating) return;
+            
+            render();
+            
+            if (animationFrame <= currentPath.length) {
+                // Check for target hit
+                if (animationFrame > 0) {
+                    let x = 0, y = 0;
+                    for (let i = 0; i < animationFrame; i++) {
+                        switch(currentPath[i]) {
+                            case 'R': x++; break;
+                            case 'L': x--; break;
+                            case 'U': y++; break;
+                            case 'D': y--; break;
+                        }
+                    }
+                    
+                    if (x === 1 && y === 1) {
+                        updateStatus(true);
+                    }
+                }
+                
+                // Continue animation
+                const speed = document.getElementById('speed').value;
+                if (animationFrame < currentPath.length) {
+                    animationFrame++;
+                    setTimeout(() => requestAnimationFrame(animate), 500 / speed);
+                } else {
+                    isAnimating = false;
+                    
+                    // Final check if the last position didn't hit target
+                    if (!reachedTarget) {
+                        updateStatus(false);
+                    }
+                }
+            } else {
+                isAnimating = false;
+            }
+        }
+
+        function updateStatus(success) {
+            const statusElement = document.getElementById('status');
+            statusElement.className = success ? 'success' : 'fail';
+            statusElement.textContent = success ? 'YES! Target reached!' : 'NO! Target not reached.';
+        }
+
+        function startAnimation() {
+            // Reset previous animation state
+            resetAnimation();
+            
+            // Get and validate the input
+            const input = document.getElementById('input').value.toUpperCase();
+            currentPath = input.split('').filter(c => ['R', 'L', 'U', 'D'].includes(c));
+            
+            if (currentPath.length === 0) {
+                const statusElement = document.getElementById('status');
+                statusElement.className = 'fail';
+                statusElement.textContent = 'Please enter a valid path (R, L, U, D)';
+                return;
+            }
+            
+            // Update status to pending
+            const statusElement = document.getElementById('status');
+            statusElement.className = 'pending';
+            statusElement.textContent = 'Animating...';
+            
+            // Start the animation
+            animationFrame = 0;
+            reachedTarget = false;
+            isAnimating = true;
+            animate();
+        }
+
+        function resetAnimation() {
+            currentPath = [];
+            animationFrame = 0;
+            reachedTarget = false;
+            isAnimating = false;
+            
+            // Reset status
+            const statusElement = document.getElementById('status');
+            statusElement.className = 'pending';
+            statusElement.textContent = 'Ready';
+            
+            render();
+        }
+        
+        function loadExample(path) {
+            document.getElementById('input').value = path;
+            startAnimation();
+        }
+
+        // Initialize WebGL when the page loads
+        window.onload = function() {
+            initGL();
+            render();
+            
+            // Add wheel event listener for zooming
+            const canvas = document.getElementById('glCanvas');
+            canvas.addEventListener('wheel', (event) => {
+                event.preventDefault();
+                
+                // Adjust zoom level based on wheel direction
+                if (event.deltaY < 0) {
+                    zoomLevel *= 1.1; // Zoom in
+                } else {
+                    zoomLevel *= 0.9; // Zoom out
+                }
+                
+                // Clamp zoom level to reasonable bounds
+                zoomLevel = Math.max(0.01, Math.min(0.5, zoomLevel));
+                
+                // Update matrix and render
+                createMatrix();
+                render();
+            });
+            
+            // Add event listeners for keyboard
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    startAnimation();
+                }
+            });
+        };
+    </script>
+</body>
+</html> 
