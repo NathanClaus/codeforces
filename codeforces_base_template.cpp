@@ -1,5 +1,6 @@
 #include <bits/stdc++.h>
 #include <ranges>
+#include "coding_library.h"
 using namespace std;
 
 typedef vector < string > vs;

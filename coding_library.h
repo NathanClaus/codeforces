@@ -314,9 +314,9 @@ namespace Geometry {
   
 
   struct Point2D {
-    long long xx, yy;
-    
-    Point2D(long long x,long long y) {
+    long double xx, yy;
+
+    Point2D(long double x,long double y) {
       xx = x;
       yy = y;
     }
@@ -369,12 +369,36 @@ namespace Geometry {
       if(xx == other.xx && yy == other.yy) return true;
       else return false;
     }
+
+    Point2D rotate_about_point_radians(const Point2D& point, long double angle) {
+      if(xx == point.xx && yy == point.yy) return *this;
+
+      long double current_angle = atan2(yy - point.yy, xx - point.xx);
+      long double radius = dist(point);
+      long double cos_theta = cos(angle + current_angle);
+      long double sin_theta = sin(angle + current_angle);
+      long double new_x = point.xx + radius * cos_theta;
+      long double new_y = point.yy + radius * sin_theta;
+      return Point2D(new_x, new_y);
+    }
   };
 
   ostream& operator<<(ostream& os, const Point2D& p) {
     return os << "(" << p.xx << ", " << p.yy << ")";
   }
 
+
+  /**
+   * Rotates a square bitmask 90 degrees clockwise.
+   * 
+   * The function interprets the bitmask as a square grid of size x size,
+   * where each bit represents a cell in the grid. It then rotates this grid
+   * 90 degrees clockwise and returns the resulting bitmask.
+   * 
+   * @param mask The original bitmask to rotate
+   * @param size The side length of the square grid
+   * @return The rotated bitmask
+   */
   long long rotate_bitmask(long long mask, int size) {
     long long rotated_mask = 0;
     for(long long r = 0; r < size; r++) {
