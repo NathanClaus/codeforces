@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Codeforces 2090C - Seating Animation</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        canvas {
+            border: 2px solid #333;
+            background-color: white;
+            margin: 20px;
+        }
+        .controls {
+            margin: 10px;
+        }
+        button {
+            padding: 8px 16px;
+            margin: 0 5px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .info {
+            max-width: 600px;
+            margin: 20px;
+            padding: 15px;
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .legend {
+            display: flex;
+            gap: 20px;
+            margin: 10px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .color-box {
+            width: 20px;
+            height: 20px;
+            border: 1px solid #000;
+        }
+    </style>
+</head>
+<body>
+    <h1>Codeforces 2090C - Seating Animation</h1>
+    <div class="info">
+        <p>This animation demonstrates the seating process for the restaurant problem:</p>
+        <ul>
+            <li>First seats are filled in a pattern where y decreases by 3 and x increases by 3</li>
+            <li>When a seat is filled, it creates 3 new possible seats</li>
+            <li>The algorithm uses priority queues to choose the best seat based on coordinate sums</li>
+        </ul>
+    </div>
+    <div class="legend">
+        <div class="legend-item">
+            <div class="color-box" style="background-color: #FFFFFF;"></div>
+            <span>Empty Seat</span>
+        </div>
+        <div class="legend-item">
+            <div class="color-box" style="background-color: #FF9999;"></div>
+            <span>Occupied Seat</span>
+        </div>
+        <div class="legend-item">
+            <div class="color-box" style="background-color: #99FF99;"></div>
+            <span>Available Seat</span>
+        </div>
+    </div>
+    <canvas id="seatingCanvas" width="600" height="600"></canvas>
+    <div class="controls">
+        <button onclick="prevFrame()">Previous</button>
+        <button onclick="playPause()">Play/Pause</button>
+        <button onclick="nextFrame()">Next</button>
+        <button onclick="resetAnimation()">Reset</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('seatingCanvas');
+        const ctx = canvas.getContext('2d');
+        const GRID_SIZE = 20;
+        const CELL_SIZE = canvas.width / GRID_SIZE;
+        let currentFrame = 0;
+        let isPlaying = false;
+        let animationInterval;
+
+        // Colors
+        const EMPTY_COLOR = '#FFFFFF';
+        const OCCUPIED_COLOR = '#FF9999';
+        const AVAILABLE_COLOR = '#99FF99';
+        const BORDER_COLOR = '#000000';
+        const TEXT_COLOR = '#000000';
+
+        // Seating data structure
+        class Seat {
+            constructor(x, y, frame) {
+                this.x = x;
+                this.y = y;
+                this.frame = frame;
+                this.priority = x + y;
+            }
+        }
+
+        // Initialize seats
+        let seats = [];
+        let availableSeats = new Set();
+
+        function initializeSeats() {
+            seats = [];
+            availableSeats.clear();
+            
+            // Add first seats in the pattern
+            let startY = 1;
+            while (seats.length < 5) {
+                let y = startY;
+                let x = 1;
+                while (y > 0 && seats.length < 5) {
+                    seats.push(new Seat(x, y, seats.length));
+                    y -= 3;
+                    x += 3;
+                }
+                startY += 3;
+            }
+        }
+
+        function addAvailableSeats(x, y) {
+            const newSeats = [
+                [x, y + 1],
+                [x + 1, y],
+                [x + 1, y + 1]
+            ];
+            
+            newSeats.forEach(([newX, newY]) => {
+                if (newX < GRID_SIZE && newY < GRID_SIZE) {
+                    availableSeats.add(`${newX},${newY}`);
+                }
+            });
+        }
+
+        function drawGrid() {
+            ctx.strokeStyle = BORDER_COLOR;
+            ctx.lineWidth = 1;
+            
+            for (let i = 0; i <= GRID_SIZE; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * CELL_SIZE, 0);
+                ctx.lineTo(i * CELL_SIZE, canvas.height);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.moveTo(0, i * CELL_SIZE);
+                ctx.lineTo(canvas.width, i * CELL_SIZE);
+                ctx.stroke();
+            }
+        }
+
+        function drawSeats() {
+            // Draw available seats
+            availableSeats.forEach(coord => {
+                const [x, y] = coord.split(',').map(Number);
+                ctx.fillStyle = AVAILABLE_COLOR;
+                ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                ctx.strokeStyle = BORDER_COLOR;
+                ctx.strokeRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            });
+
+            // Draw all occupied seats
+            seats.forEach((seat, index) => {
+                ctx.fillStyle = OCCUPIED_COLOR;
+                ctx.fillRect(seat.x * CELL_SIZE, seat.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                ctx.strokeStyle = BORDER_COLOR;
+                ctx.strokeRect(seat.x * CELL_SIZE, seat.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                
+                ctx.fillStyle = TEXT_COLOR;
+                ctx.font = '20px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(
+                    (index + 1).toString(),
+                    seat.x * CELL_SIZE + CELL_SIZE/2,
+                    seat.y * CELL_SIZE + CELL_SIZE/2
+                );
+            });
+        }
+
+        function draw() {
+            ctx.fillStyle = EMPTY_COLOR;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            drawGrid();
+            drawSeats();
+            
+            ctx.fillStyle = TEXT_COLOR;
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Frame: ${currentFrame}`, 10, canvas.height - 10);
+        }
+
+        function nextFrame() {
+            if (currentFrame < 15) {
+                currentFrame++;
+                if (currentFrame <= 5) {
+                    // First seats are already initialized
+                    if (currentFrame > 0) {
+                        addAvailableSeats(seats[currentFrame - 1].x, seats[currentFrame - 1].y);
+                    }
+                } else {
+                    // Add a new seat from available seats
+                    const availableArray = Array.from(availableSeats).map(coord => {
+                        const [x, y] = coord.split(',').map(Number);
+                        return new Seat(x, y, currentFrame);
+                    });
+                    
+                    if (availableArray.length > 0) {
+                        // Sort by priority (x + y)
+                        availableArray.sort((a, b) => a.priority - b.priority);
+                        const newSeat = availableArray[0];
+                        seats.push(newSeat);
+                        availableSeats.delete(`${newSeat.x},${newSeat.y}`);
+                        addAvailableSeats(newSeat.x, newSeat.y);
+                    }
+                }
+                draw();
+            }
+        }
+
+        function prevFrame() {
+            if (currentFrame > 0) {
+                currentFrame--;
+                // Reset available seats
+                availableSeats.clear();
+                // Rebuild available seats up to current frame
+                for (let i = 0; i < currentFrame; i++) {
+                    addAvailableSeats(seats[i].x, seats[i].y);
+                }
+                draw();
+            }
+        }
+
+        function playPause() {
+            if (isPlaying) {
+                clearInterval(animationInterval);
+                isPlaying = false;
+            } else {
+                animationInterval = setInterval(() => {
+                    if (currentFrame < 15) {
+                        nextFrame();
+                    } else {
+                        clearInterval(animationInterval);
+                        isPlaying = false;
+                    }
+                }, 1000);
+                isPlaying = true;
+            }
+        }
+
+        function resetAnimation() {
+            currentFrame = 0;
+            if (isPlaying) {
+                clearInterval(animationInterval);
+                isPlaying = false;
+            }
+            initializeSeats();
+            availableSeats.clear();
+            draw();
+        }
+
+        // Initialize the animation
+        initializeSeats();
+        draw();
+    </script>
+</body>
+</html> 

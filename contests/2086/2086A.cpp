@@ -12,7 +12,9 @@ int main(int argc, char** argv) {
   int NUM_TESTS = 0;
   cin >> NUM_TESTS;
   for(int test_idx = 0; test_idx < NUM_TESTS; test_idx++) {
-
+    int N;
+    cin >> N;
+    cout << 2 * N << endl;
   }
 
   return 0;
